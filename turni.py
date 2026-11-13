@@ -1,5 +1,5 @@
 """
-Controllo turni sul Totem ATAC con notifica WhatsApp (CallMeBot).
+Controllo turni sul Totem ATAC con notifica ntfy (e WhatsApp CallMeBot se attivato).
 
 Regole (date dall'utente):
 - si aggiorna solo il turno del giorno dopo;
@@ -31,6 +31,7 @@ UTENTE = os.environ.get("TOTEM_UTENTE", "")
 PASSWORD = os.environ.get("TOTEM_PASSWORD", "")
 WA_NUMERO = os.environ.get("WHATSAPP_NUMERO", "")
 WA_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 
 INTERVALLO_SECONDI = int(os.environ.get("INTERVALLO_SECONDI", "60"))
 ORA_INIZIO = 9
@@ -49,11 +50,39 @@ def log(msg):
     print(f"[{datetime.now(ROMA):%H:%M:%S}] {msg}", flush=True)
 
 
-# ---------------------------------------------------------------- WhatsApp
+# ---------------------------------------------------------------- Notifiche
+def ntfy(testo):
+    for tentativo in range(3):
+        try:
+            r = requests.post(
+                f"https://ntfy.sh/{NTFY_TOPIC}",
+                data=testo.encode("utf-8"),
+                headers={"Title": "Turni Totem", "Priority": "high", "Tags": "bus"},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                log("Notifica ntfy inviata")
+                return True
+            log(f"ntfy: risposta {r.status_code}, riprovo")
+        except requests.RequestException:
+            log("ntfy: errore di rete, riprovo")
+        time.sleep(10)
+    return False
+
+
 def whatsapp(testo):
-    if not (WA_NUMERO and WA_APIKEY):
-        log("WhatsApp non configurato (mancano i Secrets)")
-        return False
+    """Manda la notifica: ntfy e/o WhatsApp, a seconda dei Secrets presenti."""
+    ok = False
+    if NTFY_TOPIC:
+        ok = ntfy(testo) or ok
+    if WA_NUMERO and WA_APIKEY:
+        ok = whatsapp_callmebot(testo) or ok
+    if not (NTFY_TOPIC or (WA_NUMERO and WA_APIKEY)):
+        log("Nessuna notifica configurata (mancano i Secrets)")
+    return ok
+
+
+def whatsapp_callmebot(testo):
     for tentativo in range(3):
         try:
             r = requests.get(

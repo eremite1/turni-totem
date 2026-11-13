@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "Prova: manda subito un WhatsApp con il turno di domani"
+        description: "Prova: manda subito una notifica con il turno di domani"
         type: boolean
         default: true
 
@@ -47,6 +47,7 @@ jobs:
           TOTEM_PASSWORD: ${{ secrets.TOTEM_PASSWORD }}
           WHATSAPP_NUMERO: ${{ secrets.WHATSAPP_NUMERO }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           INTERVALLO_SECONDI: "60"
           MODALITA_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
         run: python turni.py
