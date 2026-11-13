@@ -254,6 +254,34 @@ def leggi_caselle(soup):
     return caselle
 
 
+def diagnosi_js(totem, soup):
+    """Cerca nei file JavaScript (codice del sito, non dati personali)
+    da dove vengono caricati i turni."""
+    pat = re.compile(r"""(url\s*:\s*['"][^'"]+['"]|['"][^'"\s]*\.(?:aspx|ashx|asmx|svc)[^'"\s]*['"]|PageMethods\.\w+|Ext\.Ajax\.request)""")
+    for sc in soup.find_all("script"):
+        src = sc.get("src") or ""
+        if not src.startswith("js/") or not any(k in src for k in ("turnimese", "nsTotem", "autista.min", "dettaglio")):
+            continue
+        try:
+            js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, src), timeout=30).text
+        except requests.RequestException:
+            continue
+        log(f"DIAGNOSI-JS {src.split('?')[0]} ({len(js)} caratteri)")
+        visti = set()
+        for m in pat.finditer(js):
+            ctx = js[max(0, m.start() - 120): m.end() + 200].replace("\n", " ")
+            if m.group(0) in visti:
+                continue
+            visti.add(m.group(0))
+            log(f"DIAGNOSI-JS   {ctx}")
+    # script interni alla pagina: solo i nomi degli indirizzi, senza contesto
+    for sc in soup.find_all("script"):
+        if sc.get("src"):
+            continue
+        for m in pat.finditer(sc.get_text()):
+            log(f"DIAGNOSI-INLINE {m.group(0)}")
+
+
 def diagnosi(soup, url):
     """Stampa solo la STRUTTURA della pagina (niente nomi, niente turni)."""
     log(f"DIAGNOSI pagina: {urllib.parse.urlparse(url).path}")
@@ -371,6 +399,7 @@ def main():
         soup = totem.carica_calendario()
         if soup is not None:
             diagnosi(soup, totem.url_pagina)
+            diagnosi_js(totem, soup)
         try:
             letti = leggi_giorni(totem, date) or {}
         except Exception as e:  # noqa: BLE001
