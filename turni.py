@@ -212,6 +212,17 @@ def leggi_giorni(totem, date):
     return risultato
 
 
+def giorni_da_controllare(oggi):
+    """Domani; il sabato anche il lunedi'. La domenica niente."""
+    wd = oggi.weekday()  # 0=lun ... 5=sab, 6=dom
+    if wd == 6:
+        return []
+    giorni = [oggi + timedelta(days=1)]
+    if wd == 5:
+        giorni.append(oggi + timedelta(days=2))
+    return giorni
+
+
 # ---------------------------------------------------------------- Stato
 def carica_stato():
     try:
