@@ -208,7 +208,9 @@ def leggi_giorni(totem, date):
                if str(t.get("DATAATTIVITA") or "")[:10] == iso]
         col = sorted(f"{c.get('seq')}:{c.get('status')}" for c in colori
                      if str(c.get("GiornoEvidenza") or "")[:10] == iso)
-        risultato[iso] = {"testo": " ".join(a for a in att if a), "colore": "|".join(col)}
+        ids = sorted(str(t.get("ID")) for t in turni if str(t.get("DATAATTIVITA") or "")[:10] == iso)
+        risultato[iso] = {"testo": " ".join(a for a in att if a), "colore": "|".join(col),
+                          "id": "|".join(ids)}
     return risultato
 
 
@@ -286,6 +288,17 @@ def main():
             log(f"Errore lettura: {type(e).__name__}")
             letti = {}
         log(f"Test: caselle lette {len(letti)}, con turno scritto {sum(1 for v in letti.values() if v['testo'])}")
+        log(f"Test ID: presenti {all(v.get('id') for v in letti.values())}")
+        time.sleep(5)
+        try:
+            totem.matricola = None
+            totem2 = Totem()
+            totem2.accedi()
+            letti2 = leggi_giorni(totem2, date) or {}
+            stabili = all(letti2.get(k, {}).get("id") == v.get("id") for k, v in letti.items())
+            log(f"Test ID: uguali dopo nuova lettura e nuovo accesso = {stabili}")
+        except Exception as e:  # noqa: BLE001
+            log(f"Test ID: errore {type(e).__name__}")
         righe = [f"{nome_giorno(k)}: {v['testo'] or '(vuoto)'}" for k, v in letti.items()]
         whatsapp("✅ Prova sistema turni riuscita!\n" + ("\n".join(righe) or "Nessuna casella letta"))
         for k, v in letti.items():
@@ -324,16 +337,24 @@ def main():
                 if prima is None:
                     stato[iso] = casella  # prima volta: memorizzo
                     continue
-                if impronta(prima) != impronta(casella):
-                    if prima["testo"] != casella["testo"]:
-                        msg = (f"🚌 Turno aggiornato!\n{nome_giorno(iso)}: "
-                               f"{prima['testo'] or '(vuoto)'} ➜ {casella['testo'] or '(vuoto)'}")
-                    else:
-                        msg = (f"🚌 Turno modificato!\n{nome_giorno(iso)}: "
-                               f"{casella['testo']} (è cambiato il colore della casella)")
-                    if whatsapp(msg):
+                msg = None
+                if prima.get("testo") != casella["testo"]:
+                    msg = (f"🚌 Turno aggiornato!\n{nome_giorno(iso)}: "
+                           f"{prima.get('testo') or '(vuoto)'} ➜ {casella['testo'] or '(vuoto)'}")
+                elif prima.get("colore") != casella["colore"]:
+                    msg = (f"🚌 Turno modificato!\n{nome_giorno(iso)}: "
+                           f"{casella['testo']} (è cambiato il colore della casella)")
+                elif prima.get("id") and casella.get("id") and prima["id"] != casella["id"]:
+                    msg = (f"🔄 Il gestionale ha aggiornato {nome_giorno(iso)}\n"
+                           f"Turno invariato: {casella['testo'] or '(vuoto)'}")
+                    log("ID cambiato con turno invariato")
+                if msg is None:
+                    if prima != casella:
                         stato[iso] = casella
-                    log("Novità trovata e notificata")
+                    continue
+                if whatsapp(msg):
+                    stato[iso] = casella
+                log("Novità trovata e notificata")
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
