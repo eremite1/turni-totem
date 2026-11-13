@@ -167,7 +167,7 @@ class Totem:
         dati = campi_form(soup)
         bersaglio = None
         for el in soup.find_all(["a", "input", "button"]):
-            testo = (el.get("value") or el.get_text() or "").strip()
+            testo = (el.get("value") or el.get_text() or "").replace(" ", "").strip()
             if testo in (">>", "»", "&gt;&gt;"):
                 bersaglio = el
                 break
@@ -215,21 +215,63 @@ def colore(el):
     return "|".join(parti)
 
 
+RE_CASELLA = re.compile(r"^(\d{1,2})(?:\s+(.*))?$")
+
+
 def leggi_caselle(soup):
-    """Ritorna {giorno: {"testo": ..., "colore": ...}} per il mese mostrato."""
+    """Ritorna {giorno: {"testo": ..., "colore": ...}} per il mese mostrato.
+    Funziona sia con tabelle (td) sia con caselle fatte di div/span."""
+    candidati = []
+    for el in soup.find_all(["td", "div", "li", "span", "a", "button", "p"]):
+        testo = " ".join(el.get_text(" ", strip=True).split())
+        m = RE_CASELLA.match(testo)
+        if not m or not 1 <= int(m.group(1)) <= 31:
+            continue
+        candidati.append((el, testo, m))
+    insieme = {id(c[0]) for c in candidati}
     caselle = {}
-    for td in soup.find_all("td"):
-        if td.find("td"):
-            continue  # salta le tabelle che contengono altre tabelle
-        testo = " ".join(td.get_text(" ", strip=True).split())
-        m = re.match(r"^(\d{1,2})(?:\s+(.*))?$", testo)
-        if not m:
-            continue
+    for el, testo, m in candidati:
+        # se un elemento interno ha lo stesso identico testo, uso quello interno
         giorno = int(m.group(1))
-        if not 1 <= giorno <= 31:
+        salta = False
+        for d in el.find_all(True):
+            if id(d) not in insieme:
+                continue
+            td = " ".join(d.get_text(" ", strip=True).split())
+            md = RE_CASELLA.match(td)
+            # contiene un'altra casella (giorno diverso) = e' un contenitore
+            # oppure un elemento interno ha lo stesso testo = uso quello interno
+            if td == testo or int(md.group(1)) != giorno:
+                salta = True
+                break
+        if salta:
             continue
-        caselle[giorno] = {"testo": (m.group(2) or "").strip(), "colore": colore(td)}
+        voce = {"testo": (m.group(2) or "").strip(), "colore": colore(el)}
+        attuale = caselle.get(giorno)
+        # tengo la versione piu' completa (con il turno scritto)
+        if attuale is None or len(voce["testo"]) > len(attuale["testo"]):
+            caselle[giorno] = voce
     return caselle
+
+
+def diagnosi(soup, url):
+    """Stampa solo la STRUTTURA della pagina (niente nomi, niente turni)."""
+    log(f"DIAGNOSI pagina: {urllib.parse.urlparse(url).path}")
+    log(f"DIAGNOSI mese trovato: {mese_mostrato(soup) is not None}")
+    log(f"DIAGNOSI caselle lette: {len(leggi_caselle(soup))}")
+    conteggi = {t: len(soup.find_all(t)) for t in ["table", "td", "div", "iframe", "frame", "form", "script"]}
+    log(f"DIAGNOSI elementi: {conteggi}")
+    for f in soup.find_all(["iframe", "frame"]):
+        log(f"DIAGNOSI frame: {f.get('src')}")
+    for sc in soup.find_all("script"):
+        if sc.get("src"):
+            log(f"DIAGNOSI script: {sc.get('src')}")
+    for el in soup.find_all(["a", "input", "button", "img", "span"]):
+        t = (el.get("value") or el.get_text() or el.get("alt") or el.get("title") or "").replace(" ", "")
+        if t in (">>", "»", "<<", "«", ">", "<") or "succ" in (el.get("id") or "").lower() or "next" in (el.get("id") or "").lower():
+            log(f"DIAGNOSI freccia: <{el.name}> id={el.get('id')} name={el.get('name')} "
+                f"href={'postback' if '__doPostBack' in (el.get('href') or '') else el.get('href')} "
+                f"onclick={'si' if el.get('onclick') else 'no'} testo={t}")
 
 
 def giorni_da_controllare(oggi):
@@ -326,7 +368,14 @@ def main():
     stato = carica_stato()
 
     if MODALITA_TEST:
-        letti = leggi_giorni(totem, date) or {}
+        soup = totem.carica_calendario()
+        if soup is not None:
+            diagnosi(soup, totem.url_pagina)
+        try:
+            letti = leggi_giorni(totem, date) or {}
+        except Exception as e:  # noqa: BLE001
+            log(f"Errore lettura: {e}")
+            letti = {}
         righe = [f"{nome_giorno(k)}: {v['testo'] or '(vuoto)'}" for k, v in letti.items()]
         whatsapp("✅ Prova sistema turni riuscita!\n" + ("\n".join(righe) or "Nessuna casella letta"))
         for k, v in letti.items():
