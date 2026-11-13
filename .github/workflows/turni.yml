@@ -1,0 +1,71 @@
+name: Controllo turni totem
+
+on:
+  schedule:
+    # Lunedì-Sabato. Due orari per coprire ora solare e ora legale:
+    # il programma scarta da solo quello troppo presto.
+    - cron: "40 6 * * 1-6"
+    - cron: "40 7 * * 1-6"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Prova: manda subito un WhatsApp con il turno di domani"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: turni
+  cancel-in-progress: false
+
+jobs:
+  controlla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa librerie
+        run: pip install requests beautifulsoup4
+
+      - name: Recupera memoria dei turni
+        uses: actions/cache/restore@v4
+        with:
+          path: stato
+          key: stato-turni-${{ github.run_id }}
+          restore-keys: stato-turni-
+
+      - name: Controlla il totem
+        env:
+          TOTEM_UTENTE: ${{ secrets.TOTEM_UTENTE }}
+          TOTEM_PASSWORD: ${{ secrets.TOTEM_PASSWORD }}
+          WHATSAPP_NUMERO: ${{ secrets.WHATSAPP_NUMERO }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          INTERVALLO_SECONDI: "60"
+          MODALITA_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+        run: python turni.py
+
+      - name: Salva memoria dei turni
+        if: always() && hashFiles('stato/stato.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: stato
+          key: stato-turni-${{ github.run_id }}
+
+      # Tiene vivo il repository: GitHub spegne i controlli automatici
+      # se il repository resta fermo per 60 giorni.
+      - name: Segna ultimo avvio
+        if: always()
+        run: |
+          date -u +"%Y-%m-%d" > ultimo_avvio.txt
+          git config user.name "turni-bot"
+          git config user.email "turni-bot@users.noreply.github.com"
+          git add ultimo_avvio.txt
+          git commit -m "Ultimo avvio" || exit 0
+          git push || true
