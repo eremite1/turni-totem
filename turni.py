@@ -32,6 +32,7 @@ PASSWORD = os.environ.get("TOTEM_PASSWORD", "")
 WA_NUMERO = os.environ.get("WHATSAPP_NUMERO", "")
 WA_APIKEY = os.environ.get("CALLMEBOT_APIKEY", "")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
+NTFY_TOPIC_COLLEGHI = os.environ.get("NTFY_TOPIC_COLLEGHI", "")
 
 INTERVALLO_SECONDI = int(os.environ.get("INTERVALLO_SECONDI", "60"))
 ORA_INIZIO = 9
@@ -51,11 +52,12 @@ def log(msg):
 
 
 # ---------------------------------------------------------------- Notifiche
-def ntfy(testo):
+def ntfy(testo, topic=None):
+    topic = topic or NTFY_TOPIC
     for tentativo in range(3):
         try:
             r = requests.post(
-                f"https://ntfy.sh/{NTFY_TOPIC}",
+                f"https://ntfy.sh/{topic}",
                 data=testo.encode("utf-8"),
                 headers={"Title": "Turni Totem", "Priority": "high", "Tags": "bus"},
                 timeout=30,
@@ -209,7 +211,10 @@ def leggi_giorni(totem, date):
         col = sorted(f"{c.get('seq')}:{c.get('status')}" for c in colori
                      if str(c.get("GiornoEvidenza") or "")[:10] == iso)
         ids = sorted(str(t.get("ID")) for t in turni if str(t.get("DATAATTIVITA") or "")[:10] == iso)
+        stati = sorted({str(c.get("status") or "").strip() for c in colori
+                        if str(c.get("GiornoEvidenza") or "")[:10] == iso} - {""})
         risultato[iso] = {"testo": " ".join(a for a in att if a), "colore": "|".join(col),
+                          "stato": ", ".join(stati),
                           "id": "|".join(ids)}
     return risultato
 
@@ -238,7 +243,7 @@ def salva_stato(stato):
     os.makedirs(os.path.dirname(FILE_STATO), exist_ok=True)
     # tieni solo gli ultimi 20 giorni
     limite = (datetime.now(ROMA).date() - timedelta(days=20)).isoformat()
-    stato = {k: v for k, v in stato.items() if k >= limite}
+    stato = {k: v for k, v in stato.items() if k.startswith("_") or k >= limite}
     with open(FILE_STATO, "w", encoding="utf-8") as f:
         json.dump(stato, f, ensure_ascii=False)
 
@@ -342,8 +347,8 @@ def main():
                     msg = (f"🚌 Turno aggiornato!\n{nome_giorno(iso)}: "
                            f"{prima.get('testo') or '(vuoto)'} ➜ {casella['testo'] or '(vuoto)'}")
                 elif prima.get("colore") != casella["colore"]:
-                    msg = (f"🚌 Turno modificato!\n{nome_giorno(iso)}: "
-                           f"{casella['testo']} (è cambiato il colore della casella)")
+                    msg = (f"🚌 Turno modificato!\n{nome_giorno(iso)}: {casella['testo']}\n"
+                           f"Stato richiesta: {prima.get('stato') or '(nessuno)'} ➜ {casella.get('stato') or '(nessuno)'}")
                 elif prima.get("id") and casella.get("id") and prima["id"] != casella["id"]:
                     msg = (f"🔄 Il gestionale ha aggiornato {nome_giorno(iso)}\n"
                            f"Turno invariato: {casella['testo'] or '(vuoto)'}")
@@ -358,6 +363,11 @@ def main():
                 if whatsapp(msg):
                     stato[iso] = casella
                 log("Novità trovata e notificata")
+                pubblicazione = not msg.startswith("🚌 Turno modificato")
+                if pubblicazione and NTFY_TOPIC_COLLEGHI and stato.get("_colleghi") != oggi.isoformat():
+                    if ntfy("🚌 Variazioni aggiornate", NTFY_TOPIC_COLLEGHI):
+                        stato["_colleghi"] = oggi.isoformat()
+                        log("Avviso colleghi inviato")
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")

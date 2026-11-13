@@ -48,6 +48,7 @@ jobs:
           WHATSAPP_NUMERO: ${{ secrets.WHATSAPP_NUMERO }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOPIC_COLLEGHI: ${{ secrets.NTFY_TOPIC_COLLEGHI }}
           INTERVALLO_SECONDI: "60"
           MODALITA_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
         run: python turni.py
