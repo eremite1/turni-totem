@@ -299,7 +299,7 @@ def main():
             log(f"Test ID: uguali dopo nuova lettura e nuovo accesso = {stabili}")
         except Exception as e:  # noqa: BLE001
             log(f"Test ID: errore {type(e).__name__}")
-        righe = [f"{nome_giorno(k)}: {v['testo'] or '(vuoto)'}" for k, v in letti.items()]
+        righe = [f"{nome_giorno(k)}: {v['testo'] or '(vuoto)'} (ID {v.get('id') or '?'})" for k, v in letti.items()]
         whatsapp("✅ Prova sistema turni riuscita!\n" + ("\n".join(righe) or "Nessuna casella letta"))
         for k, v in letti.items():
             stato[k] = v
@@ -348,6 +348,9 @@ def main():
                     msg = (f"🔄 Il gestionale ha aggiornato {nome_giorno(iso)}\n"
                            f"Turno invariato: {casella['testo'] or '(vuoto)'}")
                     log("ID cambiato con turno invariato")
+                if msg is not None:
+                    # ID solo nella notifica privata, mai nei registri pubblici
+                    msg += f"\nID: {prima.get('id') or '?'} ➜ {casella.get('id') or '?'}"
                 if msg is None:
                     if prima != casella:
                         stato[iso] = casella
