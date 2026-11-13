@@ -274,31 +274,13 @@ def diagnosi_js(totem, soup):
                 continue
             visti.add(m.group(0))
             log(f"DIAGNOSI-JS   {ctx}")
-    # quale file disegna il calendario?
-    for sc in soup.find_all("script"):
-        src = sc.get("src") or ""
-        if not src.startswith("js/"):
-            continue
-        try:
-            js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, src), timeout=30).text
-        except requests.RequestException:
-            continue
-        nome = src.split("?")[0]
-        for parola in ("Respinta", "Oggi", "Lunedì", "Luned", "Domenica", "Sposta Riposo", "Violazione"):
-            i = js.find(parola)
-            if i >= 0:
-                log(f"DIAGNOSI-CAL {nome} contiene '{parola}'")
-        if any(js.find(p) >= 0 for p in ("Respinta", "Violazione", "Domenica")):
-            for m in re.finditer(r'(read:"[^"]+"|url:"[^"]+"|setBaseParam\("\w+"|name:"\w+")', js):
-                log(f"DIAGNOSI-CAL {nome}   {m.group(0)}")
-    for sc in soup.find_all("script"):
-        if sc.get("src"):
-            continue
-        t = sc.get_text()
-        for m in re.finditer(r"(?i)matricola|showWindow|new Ext\.\w+", t):
-            ctx = re.sub(r"\d", "#", t[max(0, m.start() - 80): m.end() + 120])
-            ctx = re.sub(r"'[^']*'|\"[^\"]*\"", "'…'", ctx)
-            log(f"DIAGNOSI-INL {ctx}")
+    try:
+        js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, "js/totem.min.js"), timeout=30).text
+        for parola in ("bdrop.aspx?sStatus=0", "colorazioneCalendario", '"strMatricola"', '"daData"', "matricola=", "Matricola=", "_nc", "GiornoEvidenza"):
+            for m in re.finditer(re.escape(parola), js):
+                log(f"DIAGNOSI-TOT {parola} :: {js[max(0, m.start() - 200): m.end() + 300]}")
+    except requests.RequestException:
+        pass
     # script interni alla pagina: solo i nomi degli indirizzi, senza contesto
     for sc in soup.find_all("script"):
         if sc.get("src"):
