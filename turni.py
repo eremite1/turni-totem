@@ -36,6 +36,8 @@ NTFY_TOPIC_COLLEGHI = os.environ.get("NTFY_TOPIC_COLLEGHI", "")
 
 INTERVALLO_SECONDI = int(os.environ.get("INTERVALLO_SECONDI", "60"))
 ORA_INIZIO = 9
+MINUTO_INIZIO = 30
+MINUTI_DOPO_AGGIORNAMENTO = int(os.environ.get("MINUTI_DOPO_AGGIORNAMENTO", "15"))
 ORA_FINE = 14
 FILE_STATO = "stato/stato.json"
 MODALITA_TEST = os.environ.get("MODALITA_TEST", "false").lower() == "true"
@@ -273,7 +275,7 @@ def main():
         date = [oggi + timedelta(days=1)]
     # GitHub parte due volte (per gestire ora legale/solare): la partenza
     # troppo presto viene scartata, ci pensa quella dopo.
-    if not MODALITA_TEST and adesso.hour < 8:
+    if not MODALITA_TEST and adesso.hour < 9:
         log("Troppo presto: ci pensa l'avvio successivo")
         return
 
@@ -313,20 +315,29 @@ def main():
         return
 
     # attesa fino alle 9:00
-    inizio = datetime.combine(oggi, datetime.min.time(), ROMA).replace(hour=ORA_INIZIO)
+    if stato.get("_finito") == oggi.isoformat():
+        log("Turni di oggi già aggiornati: niente da fare")
+        return
+    inizio = datetime.combine(oggi, datetime.min.time(), ROMA).replace(hour=ORA_INIZIO, minute=MINUTO_INIZIO)
     fine = datetime.combine(oggi, datetime.min.time(), ROMA).replace(hour=ORA_FINE)
     if datetime.now(ROMA) >= fine:
         log("Sono già passate le 14: esco")
         return
     attesa = (inizio - datetime.now(ROMA)).total_seconds()
     if attesa > 0:
-        log(f"Aspetto le {ORA_INIZIO}:00 ({int(attesa // 60)} minuti)")
+        log(f"Aspetto le {ORA_INIZIO}:{MINUTO_INIZIO:02d} ({int(attesa // 60)} minuti)")
         time.sleep(attesa)
 
     errori_di_fila = 0
     avvisato_errore = False
+    aggiornati = set()      # giorni il cui turno e' gia' uscito
+    stop_alle = None        # quando fermarsi dopo l'uscita dei turni
     controlli = 0
     while datetime.now(ROMA) < fine:
+        if stop_alle and datetime.now(ROMA) >= stop_alle:
+            log("Turni usciti e controllo extra finito: mi fermo")
+            stato["_finito"] = oggi.isoformat()
+            break
         try:
             letti = leggi_giorni(totem, date)
             if letti is None:
@@ -364,6 +375,12 @@ def main():
                     stato[iso] = casella
                 log("Novità trovata e notificata")
                 pubblicazione = not msg.startswith("🚌 Turno modificato")
+                if pubblicazione:
+                    aggiornati.add(iso)
+                    if stop_alle is None and all(d.isoformat() in aggiornati for d in date):
+                        # resto ancora un po' per violazioni / richieste respinte
+                        stop_alle = datetime.now(ROMA) + timedelta(minutes=MINUTI_DOPO_AGGIORNAMENTO)
+                        log(f"Tutti i turni usciti: controllo ancora {MINUTI_DOPO_AGGIORNAMENTO} minuti")
                 if pubblicazione and NTFY_TOPIC_COLLEGHI and stato.get("_colleghi") != oggi.isoformat():
                     if ntfy("🚌 Variazioni aggiornate", NTFY_TOPIC_COLLEGHI):
                         stato["_colleghi"] = oggi.isoformat()
