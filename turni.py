@@ -274,6 +274,32 @@ def diagnosi_js(totem, soup):
                 continue
             visti.add(m.group(0))
             log(f"DIAGNOSI-JS   {ctx}")
+    # dettagli del calendario mensile
+    try:
+        js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, "js/turnimese.min.js"), timeout=30).text
+        for m in re.finditer(r"name:\"(\w+)\"", js):
+            pass
+        log("DIAGNOSI-CAMPI " + ",".join(re.findall(r'name:"(\w+)"', js)))
+        for m in re.finditer(r"(load\(|baseParams|params\s*:|setBaseParam|IW|>>|&gt;)", js):
+            log(f"DIAGNOSI-TM {js[max(0, m.start() - 150): m.end() + 250]}")
+    except requests.RequestException:
+        pass
+    # prova a leggere i dati: stampo solo la struttura, mai i valori
+    try:
+        r = totem.s.get(urllib.parse.urljoin(totem.url_pagina, "bdrop.aspx?sStatus=6"), timeout=30)
+        log(f"DIAGNOSI-DATI stato={r.status_code} tipo={r.headers.get('content-type')} lunghezza={len(r.text)}")
+        try:
+            j = r.json()
+            log(f"DIAGNOSI-DATI chiavi={list(j.keys())} total={j.get('total')} success={j.get('success')}")
+            righe = j.get("jsonroot") or []
+            if righe:
+                log(f"DIAGNOSI-DATI campi riga={list(righe[0].keys())}")
+                date_ = sorted(str(x.get("DATAATTIVITA")) for x in righe)
+                log(f"DIAGNOSI-DATI prima data={date_[0]} ultima data={date_[-1]} righe={len(righe)}")
+        except ValueError:
+            log("DIAGNOSI-DATI non e' JSON")
+    except requests.RequestException as e:
+        log(f"DIAGNOSI-DATI errore {type(e).__name__}")
     # script interni alla pagina: solo i nomi degli indirizzi, senza contesto
     for sc in soup.find_all("script"):
         if sc.get("src"):
