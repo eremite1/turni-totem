@@ -121,7 +121,7 @@ class Totem:
     def __init__(self):
         self.s = requests.Session()
         self.s.headers.update(HEADERS)
-        self.pagina = None  # ultimo HTML del calendario (soup)
+        self.matricola = None
 
     def accedi(self):
         r = self.s.get(URL_LOGIN, timeout=30)
@@ -149,200 +149,66 @@ class Totem:
         soup2 = BeautifulSoup(r2.text, "html.parser")
         if ha_campo_password(soup2):
             return False
-        self.pagina = soup2 if "totem" in r2.url.lower() else None
         return True
 
-    def carica_calendario(self):
-        r = self.s.get(URL_TOTEM, timeout=30)
-        soup = BeautifulSoup(r.text, "html.parser")
-        if ha_campo_password(soup) or "logon" in r.url.lower():
-            return None  # sessione scaduta
-        self.pagina = soup
-        self.url_pagina = r.url
-        return soup
 
-    def mese_successivo(self):
-        """Clicca '>>' per passare al mese dopo (postback ASP.NET)."""
-        soup = self.pagina
-        dati = campi_form(soup)
-        bersaglio = None
-        for el in soup.find_all(["a", "input", "button"]):
-            testo = (el.get("value") or el.get_text() or "").replace(" ", "").strip()
-            if testo in (">>", "»", "&gt;&gt;"):
-                bersaglio = el
-                break
-        if bersaglio is None:
-            raise RuntimeError("Pulsante mese successivo non trovato")
-        href = bersaglio.get("href") or ""
-        m = re.search(r"__doPostBack\('([^']*)','([^']*)'\)", href)
-        if m:
-            dati["__EVENTTARGET"] = m.group(1)
-            dati["__EVENTARGUMENT"] = m.group(2)
-        elif bersaglio.get("name"):
-            dati[bersaglio["name"]] = bersaglio.get("value", "")
-        else:
-            raise RuntimeError("Pulsante mese successivo non utilizzabile")
-        form = soup.find("form")
-        azione = urllib.parse.urljoin(self.url_pagina, form.get("action") if form else "")
-        r = self.s.post(azione, data=dati, timeout=30)
-        nuova = BeautifulSoup(r.text, "html.parser")
-        if ha_campo_password(nuova):
-            return None
-        self.pagina = nuova
-        return nuova
-
-
-def mese_mostrato(soup):
-    testo = soup.get_text(" ", strip=True)
-    m = re.search(r"(" + "|".join(MESI) + r")\s*-\s*(\d{4})", testo)
-    if not m:
-        return None
-    return MESI.index(m.group(1)) + 1, int(m.group(2))
-
-
-def colore(el):
-    """Colore/stile della casella, per accorgersi anche dei cambi di colore."""
-    parti = []
-    for x in [el] + el.find_all(True):
-        stile = (x.get("style") or "").lower()
-        m = re.search(r"background(?:-color)?\s*:\s*([^;]+)", stile)
-        if m:
-            parti.append(m.group(1).strip())
-        if x.get("bgcolor"):
-            parti.append(x["bgcolor"].lower())
-        if x.get("class"):
-            parti.append(".".join(x["class"]))
-    return "|".join(parti)
-
-
-RE_CASELLA = re.compile(r"^(\d{1,2})(?:\s+(.*))?$")
-
-
-def leggi_caselle(soup):
-    """Ritorna {giorno: {"testo": ..., "colore": ...}} per il mese mostrato.
-    Funziona sia con tabelle (td) sia con caselle fatte di div/span."""
-    candidati = []
-    for el in soup.find_all(["td", "div", "li", "span", "a", "button", "p"]):
-        testo = " ".join(el.get_text(" ", strip=True).split())
-        m = RE_CASELLA.match(testo)
-        if not m or not 1 <= int(m.group(1)) <= 31:
-            continue
-        candidati.append((el, testo, m))
-    insieme = {id(c[0]) for c in candidati}
-    caselle = {}
-    for el, testo, m in candidati:
-        # se un elemento interno ha lo stesso identico testo, uso quello interno
-        giorno = int(m.group(1))
-        salta = False
-        for d in el.find_all(True):
-            if id(d) not in insieme:
-                continue
-            td = " ".join(d.get_text(" ", strip=True).split())
-            md = RE_CASELLA.match(td)
-            # contiene un'altra casella (giorno diverso) = e' un contenitore
-            # oppure un elemento interno ha lo stesso testo = uso quello interno
-            if td == testo or int(md.group(1)) != giorno:
-                salta = True
-                break
-        if salta:
-            continue
-        voce = {"testo": (m.group(2) or "").strip(), "colore": colore(el)}
-        attuale = caselle.get(giorno)
-        # tengo la versione piu' completa (con il turno scritto)
-        if attuale is None or len(voce["testo"]) > len(attuale["testo"]):
-            caselle[giorno] = voce
-    return caselle
-
-
-def diagnosi_js(totem, soup):
-    """Cerca nei file JavaScript (codice del sito, non dati personali)
-    da dove vengono caricati i turni."""
-    pat = re.compile(r"""(url\s*:\s*['"][^'"]+['"]|['"][^'"\s]*\.(?:aspx|ashx|asmx|svc)[^'"\s]*['"]|PageMethods\.\w+|Ext\.Ajax\.request)""")
-    for sc in soup.find_all("script"):
-        src = sc.get("src") or ""
-        if not src.startswith("js/") or not any(k in src for k in ("turnimese", "nsTotem", "autista.min", "dettaglio")):
-            continue
-        try:
-            js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, src), timeout=30).text
-        except requests.RequestException:
-            continue
-        log(f"DIAGNOSI-JS {src.split('?')[0]} ({len(js)} caratteri)")
-        visti = set()
-        for m in pat.finditer(js):
-            ctx = js[max(0, m.start() - 120): m.end() + 200].replace("\n", " ")
-            if m.group(0) in visti:
-                continue
-            visti.add(m.group(0))
-            log(f"DIAGNOSI-JS   {ctx}")
+def _righe(r):
     try:
-        js = totem.s.get(urllib.parse.urljoin(totem.url_pagina, "js/totem.min.js"), timeout=30).text
-        for parola in ("bdrop.aspx?sStatus=0", "colorazioneCalendario", '"strMatricola"', '"daData"', "matricola=", "Matricola=", "_nc", "GiornoEvidenza"):
-            for m in re.finditer(re.escape(parola), js):
-                log(f"DIAGNOSI-TOT {parola} :: {js[max(0, m.start() - 200): m.end() + 300]}")
-    except requests.RequestException:
-        pass
-    # script interni alla pagina: solo i nomi degli indirizzi, senza contesto
-    for sc in soup.find_all("script"):
-        if sc.get("src"):
-            continue
-        for m in pat.finditer(sc.get_text()):
-            log(f"DIAGNOSI-INLINE {m.group(0)}")
+        j = r.json()
+    except ValueError:
+        return None
+    if not j.get("success", True):
+        return None
+    return j.get("jsonroot") or []
 
 
-def diagnosi(soup, url):
-    """Stampa solo la STRUTTURA della pagina (niente nomi, niente turni)."""
-    log(f"DIAGNOSI pagina: {urllib.parse.urlparse(url).path}")
-    log(f"DIAGNOSI mese trovato: {mese_mostrato(soup) is not None}")
-    log(f"DIAGNOSI caselle lette: {len(leggi_caselle(soup))}")
-    conteggi = {t: len(soup.find_all(t)) for t in ["table", "td", "div", "iframe", "frame", "form", "script"]}
-    log(f"DIAGNOSI elementi: {conteggi}")
-    for f in soup.find_all(["iframe", "frame"]):
-        log(f"DIAGNOSI frame: {f.get('src')}")
-    for sc in soup.find_all("script"):
-        if sc.get("src"):
-            log(f"DIAGNOSI script: {sc.get('src')}")
-    for el in soup.find_all(["a", "input", "button", "img", "span"]):
-        t = (el.get("value") or el.get_text() or el.get("alt") or el.get("title") or "").replace(" ", "")
-        if t in (">>", "»", "<<", "«", ">", "<") or "succ" in (el.get("id") or "").lower() or "next" in (el.get("id") or "").lower():
-            log(f"DIAGNOSI freccia: <{el.name}> id={el.get('id')} name={el.get('name')} "
-                f"href={'postback' if '__doPostBack' in (el.get('href') or '') else el.get('href')} "
-                f"onclick={'si' if el.get('onclick') else 'no'} testo={t}")
+def scarica(totem, url, dati):
+    r = totem.s.post(urllib.parse.urljoin(URL_TOTEM, url), data=dati, timeout=30,
+                     headers={"X-Requested-With": "XMLHttpRequest"})
+    if "logon" in r.url.lower():
+        return None
+    return _righe(r)
 
 
-def giorni_da_controllare(oggi):
-    """Domani; il sabato anche il lunedi'. La domenica niente."""
-    wd = oggi.weekday()  # 0=lun ... 5=sab, 6=dom
-    if wd == 6:
-        return []
-    giorni = [oggi + timedelta(days=1)]
-    if wd == 5:
-        giorni.append(oggi + timedelta(days=2))
-    return giorni
+def matricole_possibili():
+    m = os.environ.get("TOTEM_MATRICOLA", "").strip()
+    cand = [m] if m else []
+    cand.append(UTENTE.strip())
+    cifre = re.sub(r"\D", "", UTENTE)
+    if cifre and cifre not in cand:
+        cand.append(cifre)
+    return [c for c in cand if c]
 
 
 def leggi_giorni(totem, date):
-    """Legge le caselle delle date richieste, anche se cadono nel mese dopo."""
-    risultato = {}
-    soup = totem.carica_calendario()
-    if soup is None:
-        return None
-    mm = mese_mostrato(soup)
-    caselle = leggi_caselle(soup)
-    per_mese_dopo = []
-    for d in date:
-        if mm == (d.month, d.year) and d.day in caselle:
-            risultato[d.isoformat()] = caselle[d.day]
-        else:
-            per_mese_dopo.append(d)
-    if per_mese_dopo:
-        soup2 = totem.mese_successivo()
-        if soup2 is None:
+    """Legge turno e colore delle date richieste dai dati del totem.
+    Ritorna {"AAAA-MM-GG": {"testo": ..., "colore": ...}} oppure None se la
+    sessione e' scaduta."""
+    inizio, fine = min(date), max(date)
+    di = inizio.strftime("%Y-%m-%d 00:00:00")
+    df = fine.strftime("%Y-%m-%d 23:59:59")
+    nc = str(int(time.time() * 1000))
+    turni = None
+    for matr in ([totem.matricola] if getattr(totem, "matricola", None) else matricole_possibili()):
+        turni = scarica(totem, "bdrop.aspx?sStatus=0",
+                        {"strMatricola": matr, "dataInizio": di, "dataFine": df, "_nc": nc})
+        if turni is None:
             return None
-        mm2 = mese_mostrato(soup2)
-        caselle2 = leggi_caselle(soup2)
-        for d in per_mese_dopo:
-            if mm2 == (d.month, d.year) and d.day in caselle2:
-                risultato[d.isoformat()] = caselle2[d.day]
+        if turni:
+            totem.matricola = matr
+            break
+    if not turni:
+        return {}
+    colori = scarica(totem, "colorazioneCalendario.aspx",
+                     {"Matricola": totem.matricola, "daData": di, "aData": df, "_nc": nc}) or []
+    risultato = {}
+    for d in date:
+        iso = d.isoformat()
+        att = [str(t.get("ATTIVITA_EFFETTIVA") or "").strip() for t in turni
+               if str(t.get("DATAATTIVITA") or "")[:10] == iso]
+        col = sorted(f"{c.get('seq')}:{c.get('status')}" for c in colori
+                     if str(c.get("GiornoEvidenza") or "")[:10] == iso)
+        risultato[iso] = {"testo": " ".join(a for a in att if a), "colore": "|".join(col)}
     return risultato
 
 
@@ -403,15 +269,12 @@ def main():
     stato = carica_stato()
 
     if MODALITA_TEST:
-        soup = totem.carica_calendario()
-        if soup is not None:
-            diagnosi(soup, totem.url_pagina)
-            diagnosi_js(totem, soup)
         try:
             letti = leggi_giorni(totem, date) or {}
         except Exception as e:  # noqa: BLE001
-            log(f"Errore lettura: {e}")
+            log(f"Errore lettura: {type(e).__name__}")
             letti = {}
+        log(f"Test: caselle lette {len(letti)}, con turno scritto {sum(1 for v in letti.values() if v['testo'])}")
         righe = [f"{nome_giorno(k)}: {v['testo'] or '(vuoto)'}" for k, v in letti.items()]
         whatsapp("✅ Prova sistema turni riuscita!\n" + ("\n".join(righe) or "Nessuna casella letta"))
         for k, v in letti.items():
