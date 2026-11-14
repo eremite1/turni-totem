@@ -248,6 +248,70 @@ def giorni_da_controllare(oggi):
     return giorni
 
 
+# ---------------------------------------------------------------- Osservatorio
+def _appiattisci(righe, chiave_id=None):
+    out = {}
+    if not isinstance(righe, list):
+        return out
+    elenco = sorted(righe, key=lambda r: json.dumps(r, sort_keys=True, default=str))
+    for i, r in enumerate(elenco):
+        if not isinstance(r, dict):
+            out[f"#{i}"] = str(r)
+            continue
+        base = str(r.get(chiave_id)) if chiave_id and r.get(chiave_id) is not None else f"#{i}"
+        for k, v in r.items():
+            out[f"{base}.{k}"] = str(v)
+    return out
+
+
+def osserva(totem, oggi):
+    """Fotografa tutte le fonti di SOLA LETTURA del totem."""
+    m = totem.matricola
+    if not m:
+        return None
+    primo = oggi.replace(day=1)
+    fine_mese_dopo = (primo + timedelta(days=62)).replace(day=1) - timedelta(days=1)
+    di, df = primo.strftime("%Y-%m-%d 00:00:00"), fine_mese_dopo.strftime("%Y-%m-%d 23:59:59")
+    nc = str(int(time.time() * 1000))
+    fonti = {
+        "mese_turni": ("bdrop.aspx?sStatus=0", {"strMatricola": m, "dataInizio": di, "dataFine": df, "_nc": nc}, "ID"),
+        "mese_dettaglio": ("bdrop.aspx?sStatus=6", {"strMatricola": m, "dataInizio": di, "dataFine": df}, "ID"),
+        "mese_colori": ("colorazioneCalendario.aspx", {"Matricola": m, "daData": di, "aData": df, "_nc": nc}, "ID"),
+        "autista": ("bdrop.aspx?sStatus=2", {"strMatricola": m, "dataFine": oggi.strftime("%d/%m/%Y")}, None),
+        "graduatoria_congedi": ("bdrop.aspx?sStatus=3", {"strMatricola": m}, None),
+        "graduatoria_turni": ("bdrop.aspx?sStatus=4", {"strMatricola": m}, None),
+        "comunicazioni": ("GridComunicazioniDiServizio.aspx?sStatus=1", {"matricola": m, "_nc": nc}, "comunicazioni_id"),
+    }
+    foto = {}
+    for nome, (url, dati, chiave) in fonti.items():
+        try:
+            righe = scarica(totem, url, dati)
+        except Exception:  # noqa: BLE001
+            righe = None
+        if righe is None:
+            continue
+        foto[nome] = _appiattisci(righe, chiave)
+    try:
+        html = totem.s.get(URL_TOTEM, timeout=30).text
+        html = re.sub(r"\?a=[^\"']*", "", html)
+        foto["pagina"] = {"impronta": hashlib.sha256(html.encode()).hexdigest()[:16]}
+    except requests.RequestException:
+        pass
+    return foto
+
+
+def confronta_osservatorio(prima, dopo):
+    """Ritorna {fonte: [(campo, vecchio, nuovo), ...]} solo per le fonti cambiate."""
+    cambi = {}
+    for fonte, nuovo in dopo.items():
+        vecchio = prima.get(fonte)
+        if vecchio is None or vecchio == nuovo:
+            continue
+        campi = sorted(k for k in set(vecchio) | set(nuovo) if vecchio.get(k) != nuovo.get(k))
+        cambi[fonte] = [(k, vecchio.get(k, "-"), nuovo.get(k, "-")) for k in campi]
+    return cambi
+
+
 # ---------------------------------------------------------------- Stato
 def carica_stato():
     try:
@@ -304,14 +368,6 @@ def main():
 
     stato = carica_stato()
 
-    if os.environ.get("DIAGNOSI_JS") == "true":
-        for nome, parole in (("js/totem.min.js", ["b.load(", "b.setBaseParam", "k.load(", "k.setBaseParam", "params:{"]),
-                             ("js/GridComunicazioniDiServizio.min.js", [])):
-            js = totem.s.get(urllib.parse.urljoin(URL_TOTEM, nome), timeout=30).text
-            for parola in parole:
-                for m in list(re.finditer(re.escape(parola), js))[:12]:
-                    log(f"DJS {nome} {parola} :: {js[max(0, m.start() - 150): m.end() + 350]}")
-        return
     if MODALITA_TEST:
         try:
             letti = leggi_giorni(totem, date) or {}
@@ -330,6 +386,11 @@ def main():
             dati_stabili = all(letti2.get(k, {}).get("dati") == v.get("dati") for k, v in letti.items())
             diversi = sorted({c.split("#")[0] for k, v in letti.items() for c in set(v["dati"]) | set(letti2.get(k, {}).get("dati", {}))
                               if v["dati"].get(c) != letti2.get(k, {}).get("dati", {}).get(c)})
+            f1 = osserva(totem2, oggi) or {}
+            time.sleep(5)
+            f2 = osserva(totem2, oggi) or {}
+            for fonte in sorted(set(f1) | set(f2)):
+                log(f"Test OSS {fonte}: voci {len(f1.get(fonte, {}))}, stabile = {f1.get(fonte) == f2.get(fonte)}")
             log(f"Test DATI: campi letti {sum(len(v['dati']) for v in letti.values())}, stabili = {dati_stabili} {diversi}")
             log(f"Test ID: uguali dopo nuova lettura e nuovo accesso = {stabili}")
         except Exception as e:  # noqa: BLE001
@@ -413,6 +474,18 @@ def main():
                     if ntfy("🚌 Variazioni aggiornate", NTFY_TOPIC_COLLEGHI):
                         stato["_colleghi"] = oggi.isoformat()
                         log("Avviso colleghi inviato")
+            if controlli % 2 == 1:
+                foto = osserva(totem, oggi)
+                if foto:
+                    precedente = stato.get("_oss") or {}
+                    cambi = confronta_osservatorio(precedente, foto)
+                    for fonte, lista in cambi.items():
+                        log(f"Osservatorio: cambiata '{fonte}' ({len(lista)} voci): "
+                            + ", ".join(sorted({c[0].split('.')[-1] for c in lista}))[:300])
+                        righe = [f"{k}: {a} ➜ {b}" for k, a, b in lista[:12]]
+                        extra = f"\n…e altre {len(lista) - 12}" if len(lista) > 12 else ""
+                        whatsapp(f"🔎 Osservatorio: cambiato '{fonte}' ({len(lista)} voci)\n" + "\n".join(righe) + extra)
+                    stato["_oss"] = foto
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
