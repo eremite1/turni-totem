@@ -291,12 +291,6 @@ def osserva(totem, oggi):
         if righe is None:
             continue
         foto[nome] = _appiattisci(righe, chiave)
-    try:
-        html = totem.s.get(URL_TOTEM, timeout=30).text
-        html = re.sub(r"\?a=[^\"']*", "", html)
-        foto["pagina"] = {"impronta": hashlib.sha256(html.encode()).hexdigest()[:16]}
-    except requests.RequestException:
-        pass
     return foto
 
 
