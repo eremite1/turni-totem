@@ -305,11 +305,11 @@ def main():
     stato = carica_stato()
 
     if os.environ.get("DIAGNOSI_JS") == "true":
-        for nome, parole in (("js/totem.min.js", ["InRitardo", "BDROPorVDAP", "ButTurniAggiorna", "GridComunicazione"]),
-                             ("js/GridComunicazioniDiServizio.min.js", ["read:", "url:", "setBaseParam", "name:"])):
+        for nome, parole in (("js/totem.min.js", ["b.load(", "b.setBaseParam", "k.load(", "k.setBaseParam", "params:{"]),
+                             ("js/GridComunicazioniDiServizio.min.js", [])):
             js = totem.s.get(urllib.parse.urljoin(URL_TOTEM, nome), timeout=30).text
             for parola in parole:
-                for m in list(re.finditer(re.escape(parola), js))[:6]:
+                for m in list(re.finditer(re.escape(parola), js))[:12]:
                     log(f"DJS {nome} {parola} :: {js[max(0, m.start() - 150): m.end() + 350]}")
         return
     if MODALITA_TEST:
