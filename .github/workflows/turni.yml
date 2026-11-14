@@ -12,6 +12,10 @@ on:
         description: "Prova: manda subito una notifica con il turno di domani"
         type: boolean
         default: true
+      subito:
+        description: "Parti subito senza aspettare le 9:30"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -51,6 +55,7 @@ jobs:
           NTFY_TOPIC_COLLEGHI: ${{ secrets.NTFY_TOPIC_COLLEGHI }}
           INTERVALLO_SECONDI: "60"
           MODALITA_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+          SUBITO: ${{ github.event_name == 'workflow_dispatch' && inputs.subito }}
         run: python turni.py
 
       - name: Salva memoria dei turni

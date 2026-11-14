@@ -41,6 +41,7 @@ MINUTI_DOPO_AGGIORNAMENTO = int(os.environ.get("MINUTI_DOPO_AGGIORNAMENTO", "15"
 ORA_FINE = 14
 FILE_STATO = "stato/stato.json"
 MODALITA_TEST = os.environ.get("MODALITA_TEST", "false").lower() == "true"
+SUBITO = os.environ.get("SUBITO", "false").lower() == "true"
 
 MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio",
         "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
@@ -203,6 +204,11 @@ def leggi_giorni(totem, date):
             break
     if not turni:
         return {}
+    try:
+        dettaglio = scarica(totem, "bdrop.aspx?sStatus=6",
+                            {"strMatricola": totem.matricola, "dataInizio": di, "dataFine": df}) or []
+    except Exception:  # noqa: BLE001
+        dettaglio = []
     colori = scarica(totem, "colorazioneCalendario.aspx",
                      {"Matricola": totem.matricola, "daData": di, "aData": df, "_nc": nc}) or []
     risultato = {}
@@ -215,7 +221,17 @@ def leggi_giorni(totem, date):
         ids = sorted(str(t.get("ID")) for t in turni if str(t.get("DATAATTIVITA") or "")[:10] == iso)
         stati = sorted({str(c.get("status") or "").strip() for c in colori
                         if str(c.get("GiornoEvidenza") or "")[:10] == iso} - {""})
+        dati = {}
+        for fonte, righe, campo_data in (("turno", turni, "DATAATTIVITA"),
+                                         ("dettaglio", dettaglio, "DATAATTIVITA"),
+                                         ("colore", colori, "GiornoEvidenza")):
+            scelte = [r for r in righe if str(r.get(campo_data) or "")[:10] == iso]
+            scelte.sort(key=lambda r: json.dumps(r, sort_keys=True, default=str))
+            for i, r in enumerate(scelte):
+                for k, v in r.items():
+                    dati[f"{fonte}.{k}#{i}"] = str(v)
         risultato[iso] = {"testo": " ".join(a for a in att if a), "colore": "|".join(col),
+                          "dati": dati,
                           "stato": ", ".join(stati),
                           "id": "|".join(ids)}
     return risultato
@@ -275,7 +291,7 @@ def main():
         date = [oggi + timedelta(days=1)]
     # GitHub parte due volte (per gestire ora legale/solare): la partenza
     # troppo presto viene scartata, ci pensa quella dopo.
-    if not MODALITA_TEST and adesso.hour < 9:
+    if not MODALITA_TEST and not SUBITO and adesso.hour < 9:
         log("Troppo presto: ci pensa l'avvio successivo")
         return
 
@@ -303,6 +319,10 @@ def main():
             totem2.accedi()
             letti2 = leggi_giorni(totem2, date) or {}
             stabili = all(letti2.get(k, {}).get("id") == v.get("id") for k, v in letti.items())
+            dati_stabili = all(letti2.get(k, {}).get("dati") == v.get("dati") for k, v in letti.items())
+            diversi = sorted({c.split("#")[0] for k, v in letti.items() for c in set(v["dati"]) | set(letti2.get(k, {}).get("dati", {}))
+                              if v["dati"].get(c) != letti2.get(k, {}).get("dati", {}).get(c)})
+            log(f"Test DATI: campi letti {sum(len(v['dati']) for v in letti.values())}, stabili = {dati_stabili} {diversi}")
             log(f"Test ID: uguali dopo nuova lettura e nuovo accesso = {stabili}")
         except Exception as e:  # noqa: BLE001
             log(f"Test ID: errore {type(e).__name__}")
@@ -323,7 +343,7 @@ def main():
     if datetime.now(ROMA) >= fine:
         log("Sono già passate le 14: esco")
         return
-    attesa = (inizio - datetime.now(ROMA)).total_seconds()
+    attesa = 0 if SUBITO else (inizio - datetime.now(ROMA)).total_seconds()
     if attesa > 0:
         log(f"Aspetto le {ORA_INIZIO}:{MINUTO_INIZIO:02d} ({int(attesa // 60)} minuti)")
         time.sleep(attesa)
@@ -374,8 +394,8 @@ def main():
                 if whatsapp(msg):
                     stato[iso] = casella
                 log("Novità trovata e notificata")
-                pubblicazione = not msg.startswith("🚌 Turno modificato")
-                if pubblicazione:
+                pubblicazione = msg.startswith("🚌 Turno aggiornato") or msg.startswith("🔄")
+                if pubblicazione or msg.startswith("🔎"):
                     aggiornati.add(iso)
                     if stop_alle is None and all(d.isoformat() in aggiornati for d in date):
                         # resto ancora un po' per violazioni / richieste respinte
