@@ -12,6 +12,7 @@ nei registri il contenuto dei turni, nomi o matricole.
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 
@@ -21,7 +22,7 @@ from turni import ROMA, Totem, leggi_giorni, log
 
 TOPIC_CASA = os.environ.get("NTFY_TOPIC_CASA", "").strip()
 GIORNI_AVANTI = int(os.environ.get("GIORNI_AVANTI", "21"))
-GIORNI_DETTAGLIO = 3  # oggi, domani, dopodomani: con i dettagli completi
+GIORNI_DETTAGLIO = 2  # oggi e domani: anche i dettagli grezzi (per controllo)
 LIMITE_BYTE = 3900    # ntfy accetta messaggi fino a 4096 byte
 
 # Campi del dettaglio da NON mandare mai (dati personali)
@@ -42,11 +43,47 @@ def dettagli_utili(dati):
     return out
 
 
+def _ora(v):
+    m = re.search(r"(\d{1,2})[:.](\d{2})", str(v))
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+
+
+def orari_e_luoghi(dati):
+    """Dai campi del dettaglio ricava allocazione (linea-tabella), luogo e ora
+    di inizio e fine. I nomi dei campi del totem non sono noti a priori:
+    li riconosco dalle parole che contengono."""
+    righe = {}
+    for chiave, valore in dati.items():
+        fonte, resto = chiave.split(".", 1) if "." in chiave else ("", chiave)
+        nome, _, i = resto.partition("#")
+        righe.setdefault((fonte, i), {})[nome.upper()] = str(valore).strip()
+    out = {"al": "", "li": "", "oi": "", "of": "", "lf": ""}
+    for (fonte, i) in sorted(righe):
+        r = righe[(fonte, i)]
+        for k, v in r.items():
+            if not v or v.lower() in ("none", "null"):
+                continue
+            ini = "INI" in k or "PART" in k or "INIZ" in k
+            fin = "FIN" in k or "ARRIV" in k
+            if "ALLOC" in k and not out["al"]:
+                out["al"] = v[:20]
+            elif "LUOG" in k and ini and not out["li"]:
+                out["li"] = v[:20]
+            elif "LUOG" in k and fin:
+                out["lf"] = v[:20]
+            elif ("ORA" in k or "ORARIO" in k) and ini and not out["oi"] and _ora(v):
+                out["oi"] = _ora(v)
+            elif ("ORA" in k or "ORARIO" in k) and fin and _ora(v):
+                out["of"] = _ora(v)
+    return {k: v for k, v in out.items() if v}
+
+
 def costruisci(letti, oggi):
     giorni = {}
     for iso in sorted(letti):
         c = letti[iso]
         voce = {"t": c.get("testo", ""), "s": c.get("stato", ""), "c": c.get("colore", "")}
+        voce.update(orari_e_luoghi(c.get("dati", {})))
         if (datetime.fromisoformat(iso).date() - oggi).days in range(GIORNI_DETTAGLIO):
             voce["x"] = dettagli_utili(c.get("dati", {}))
         giorni[iso] = voce
