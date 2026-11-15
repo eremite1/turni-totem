@@ -1,7 +1,8 @@
 """
 Turni per CASA NEROLA (Home Assistant).
 
-Legge dal totem TUTTI i turni da ieri fino a circa 5 settimane avanti,
+Legge dal totem TUTTI i turni da ieri fino a 3 settimane avanti (i turni escono il venerdi per la
+seconda settimana successiva; oltre ci sono solo i riposi),
 compresi quelli cambiati (il totem restituisce il turno effettivo, cioè
 dopo i cambi, piu' lo stato delle richieste) e li manda alla casa su un
 canale ntfy privato (Secret NTFY_TOPIC_CASA).
@@ -19,7 +20,7 @@ import requests
 from turni import ROMA, Totem, leggi_giorni, log
 
 TOPIC_CASA = os.environ.get("NTFY_TOPIC_CASA", "").strip()
-GIORNI_AVANTI = int(os.environ.get("GIORNI_AVANTI", "35"))
+GIORNI_AVANTI = int(os.environ.get("GIORNI_AVANTI", "21"))
 GIORNI_DETTAGLIO = 3  # oggi, domani, dopodomani: con i dettagli completi
 LIMITE_BYTE = 3900    # ntfy accetta messaggi fino a 4096 byte
 
