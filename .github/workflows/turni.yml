@@ -2,10 +2,15 @@ name: Controllo turni totem
 
 on:
   schedule:
-    # Lunedì-Sabato verso le 9:10. Due orari per coprire ora solare e legale:
-    # il programma scarta da solo quello troppo presto.
-    - cron: "10 7 * * 1-6"
-    - cron: "10 8 * * 1-6"
+    # Lunedì-Sabato. Più avvii tra le 9 e le 10 (ora italiana) perché GitHub
+    # a volte salta un avvio programmato: così ne basta uno che parte.
+    # Il programma scarta da solo quelli troppo presto e, appena uno è partito,
+    # gli altri si fermano (concurrency). Coprono sia ora solare che legale.
+    - cron: "5 7 * * 1-6"
+    - cron: "35 7 * * 1-6"
+    - cron: "5 8 * * 1-6"
+    - cron: "35 8 * * 1-6"
+    - cron: "5 9 * * 1-6"
   workflow_dispatch:
     inputs:
       test:
