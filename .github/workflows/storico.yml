@@ -1,0 +1,36 @@
+name: Storico turni per CarlettiBus
+
+on:
+  workflow_dispatch:
+    inputs:
+      da:
+        description: "Da quale data (AAAA-MM-GG)"
+        default: "2023-09-01"
+  push:
+    paths: ['storico_turni.py', '.github/workflows/storico.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  scarica:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests beautifulsoup4
+      - name: Scarica e cifra lo storico
+        env:
+          TOTEM_UTENTE: ${{ secrets.TOTEM_UTENTE }}
+          TOTEM_PASSWORD: ${{ secrets.TOTEM_PASSWORD }}
+          DA: ${{ inputs.da || '2023-09-01' }}
+        run: python storico_turni.py
+      - name: Salva il file cifrato (ramo storico-cifrato)
+        run: |
+          mkdir -p /tmp/out && cp storico.bin storico.key /tmp/out/
+          git config user.name "turni-bot"; git config user.email "turni-bot@users.noreply.github.com"
+          git checkout --orphan storico-cifrato && git rm -rfq . && cp /tmp/out/* . 
+          git add storico.bin storico.key && git commit -qm "Storico turni (cifrato)" && git push -fq origin storico-cifrato
