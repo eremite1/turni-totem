@@ -540,7 +540,10 @@ def main():
                         log(f"Stato {nome_giorno(iso)}: "
                             f"{sorted(ultimi_stati.get(iso) or [])} -> {sorted(ora)}")
                         ultimi_stati[iso] = ora
-                    if "INV BDROP" in ora:  # in gestione presso la CPS
+                    # Login/logout SOLO dopo la notifica di cambio codice, e solo
+                    # per quel giorno: parte quando la casella (gia' cambiata) e'
+                    # "in gestione CPS". Così non resta ore a lavorare a vuoto.
+                    if "INV BDROP" in ora and iso in codice_cambiato:
                         finestra_veloce = True
                     # stati per cui il totem accende il pulsante Annulla
                     nuovi = {"Violazione", "Respinta"} & ora - base_stati.get(iso, set())
@@ -556,7 +559,6 @@ def main():
                     whatsapp(f"⚪ Sbiancamento – annullare\n{nome_giorno(iso)}: {tipi} ({etich})\n"
                              f"[{contesto}]\n(SIMULAZIONE: non ho annullato)")
                     sbiancati.add(iso)
-                    finestra_veloce = True
                     log(f"SBIANCAMENTO simulato {nome_giorno(iso)} ({tipi}; {etich}; {contesto})")
                     if stop_alle is not None:
                         stop_alle = max(stop_alle, datetime.now(ROMA) + timedelta(minutes=5))
