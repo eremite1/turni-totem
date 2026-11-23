@@ -458,12 +458,25 @@ def main():
     sbiancati = set()       # giorni per cui ho gia' mandato lo sbiancamento
     codice_cambiato = set()  # giorni il cui CODICE turno e' cambiato in questa sessione
     finestra_veloce = False  # True quando una casella e' "in gestione CPS"
+    finestra_da = None       # quando e' iniziata la finestra "in gestione CPS"
+    MAX_FINESTRA = timedelta(minutes=20)  # per quanto rifare login/logout
     while datetime.now(ROMA) < fine:
         if stop_alle and datetime.now(ROMA) >= stop_alle and not finestra_veloce:
             log("Turni usciti e controllo extra finito: mi fermo")
             stato["_finito"] = oggi.isoformat()
             break
         try:
+            # Durante la finestra "in gestione CPS" rifaccio login/logout come
+            # nella procedura manuale: la casella, se lasciata stare, scivola in
+            # "cambio concordato" e non e' piu' annullabile.
+            if finestra_veloce and finestra_da and datetime.now(ROMA) - finestra_da < MAX_FINESTRA:
+                try:
+                    nuovo = Totem()
+                    if nuovo.accedi():
+                        totem = nuovo
+                        log("Login/logout rifatto (finestra in gestione CPS)")
+                except Exception:  # noqa: BLE001
+                    pass
             letti = leggi_giorni(totem, date)
             if letti is None:
                 log("Sessione scaduta, rientro")
@@ -547,6 +560,11 @@ def main():
                     log(f"SBIANCAMENTO simulato {nome_giorno(iso)} ({tipi}; {etich}; {contesto})")
                     if stop_alle is not None:
                         stop_alle = max(stop_alle, datetime.now(ROMA) + timedelta(minutes=5))
+                # segna quando si apre/chiude la finestra "in gestione CPS"
+                if finestra_veloce and finestra_da is None:
+                    finestra_da = datetime.now(ROMA)
+                elif not finestra_veloce:
+                    finestra_da = None
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
