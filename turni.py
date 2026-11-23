@@ -334,6 +334,42 @@ def impronta(casella):
 
 
 # ---------------------------------------------------------------- Programma
+# ---------------------------------------------------------------- Sbiancamento
+# Stati nascosti della casella (campo "status" del totem):
+#   INV BDROP = richiesta in gestione presso la CPS (finestra transitoria)
+#   Violazione = arancione, ha violato la normativa (si puo' annullare)
+#   Respinta = richiesta respinta (si puo' annullare)
+#   Accettata / AccettataG = accettata/concessa
+SEQ_TIPO = {1: "Sposta Riposo", 2: "Congedo", 3: "Libero con Paga",
+            4: "Ferie", 5: "Cambio Turno Singolo", 6: "Cambio Turno o Congedo",
+            7: "Cambio Consensuale"}
+
+
+def leggi_stati(totem, date):
+    """Per ogni giorno richiesto, lo stato nascosto delle richieste.
+    Ritorna {iso: [(seq, status), ...]} oppure None se la sessione e' scaduta."""
+    inizio, fine = min(date), max(date)
+    di = inizio.strftime("%Y-%m-%d 00:00:00")
+    df = fine.strftime("%Y-%m-%d 23:59:59")
+    righe = scarica(totem, "colorazioneCalendario.aspx",
+                    {"Matricola": totem.matricola, "daData": di, "aData": df,
+                     "_nc": str(int(time.time() * 1000))})
+    if righe is None:
+        return None
+    out = {}
+    for d in date:
+        iso = d.isoformat()
+        gg = []
+        for c in righe:
+            if str(c.get("GiornoEvidenza") or "")[:10] != iso:
+                continue
+            for st in (str(c.get("status") or "").strip(), str(c.get("status2") or "").strip()):
+                if st:
+                    gg.append((c.get("seq"), st))
+        out[iso] = gg
+    return out
+
+
 def main():
     if not (UTENTE and PASSWORD):
         log("Mancano TOTEM_UTENTE / TOTEM_PASSWORD nei Secrets")
@@ -359,20 +395,6 @@ def main():
         whatsapp("⚠️ Turni totem: accesso non riuscito. Controlla utente e password nei Secrets di GitHub.")
         sys.exit(1)
     log("Accesso al totem riuscito")
-
-    if os.environ.get("DIAGNOSI_CANC") == "true":
-        for nome in ("js/totem.min.js", "js/dettaglio.min.js"):
-            try:
-                js = totem.s.get(urllib.parse.urljoin(URL_TOTEM, nome), timeout=30).text
-            except requests.RequestException:
-                continue
-            for parola in ("Cancellazioni.aspx", "in gestione", "gestione presso",
-                           "Violazione", "Respinta", "bbar-", "annulla", "Annulla",
-                           "params:{matricola"):
-                for m in list(re.finditer(re.escape(parola), js))[:4]:
-                    pezzo = js[max(0, m.start() - 160): m.end() + 260].replace("\n", " ")
-                    log(f"DC {nome} [{parola}] :: {pezzo}")
-        return
 
     stato = carica_stato()
 
@@ -430,8 +452,13 @@ def main():
     aggiornati = set()      # giorni il cui turno e' gia' uscito
     stop_alle = None        # quando fermarsi dopo l'uscita dei turni
     controlli = 0
+    # --- Sorveglianza sbiancamento (SIMULAZIONE) ---
+    base_stati = None       # stati iniziali, per non allarmare su violazioni vecchie
+    ultimi_stati = {}       # ultimo stato visto per giorno (per loggare le transizioni)
+    sbiancati = set()       # giorni per cui ho gia' mandato lo sbiancamento
+    finestra_veloce = False  # True quando una casella e' "in gestione CPS"
     while datetime.now(ROMA) < fine:
-        if stop_alle and datetime.now(ROMA) >= stop_alle:
+        if stop_alle and datetime.now(ROMA) >= stop_alle and not finestra_veloce:
             log("Turni usciti e controllo extra finito: mi fermo")
             stato["_finito"] = oggi.isoformat()
             break
@@ -482,10 +509,34 @@ def main():
                     if ntfy("🚌 Variazioni aggiornate", NTFY_TOPIC_COLLEGHI):
                         stato["_colleghi"] = oggi.isoformat()
                         log("Avviso colleghi inviato")
-            # Osservatorio spento: le sue fonti (graduatorie, colori del mese)
-            # erano troppo rumorose e davano falsi allarmi. Restano solo gli
-            # avvisi sul turno vero. Per riaccenderlo in futuro basta rimettere
-            # qui il controllo delle fonti.
+            # --- Sbiancamento: sorveglianza stato richiesta (SIMULAZIONE) ---
+            # Guarda lo stato nascosto della casella: quando entra "in gestione
+            # CPS" controlla più spesso, e appena diventa "Violazione" avvisa
+            # (per ora SENZA annullare, così verifichiamo che riconosca bene).
+            stati = leggi_stati(totem, date)
+            finestra_veloce = False
+            if stati is not None:
+                if base_stati is None:
+                    base_stati = {iso: {s for _, s in righe} for iso, righe in stati.items()}
+                for iso, righe in stati.items():
+                    ora = {s for _, s in righe}
+                    if ora != ultimi_stati.get(iso):
+                        log(f"Stato {nome_giorno(iso)}: "
+                            f"{sorted(ultimi_stati.get(iso) or [])} -> {sorted(ora)}")
+                        ultimi_stati[iso] = ora
+                    if "INV BDROP" in ora:  # in gestione presso la CPS
+                        finestra_veloce = True
+                    nuova_viol = "Violazione" in ora and "Violazione" not in base_stati.get(iso, set())
+                    if nuova_viol and iso not in sbiancati:
+                        tipi = ", ".join(sorted({SEQ_TIPO.get(seq, f"tipo {seq}")
+                                                 for seq, s in righe if s == "Violazione"}))
+                        whatsapp(f"⚪ Sbiancamento – annullare\n{nome_giorno(iso)}: "
+                                 f"{tipi} in violazione\n(SIMULAZIONE: non ho annullato)")
+                        sbiancati.add(iso)
+                        finestra_veloce = True
+                        log(f"SBIANCAMENTO simulato per {nome_giorno(iso)} ({tipi})")
+                        if stop_alle is not None:
+                            stop_alle = max(stop_alle, datetime.now(ROMA) + timedelta(minutes=5))
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
@@ -501,7 +552,7 @@ def main():
                     totem.accedi()
                 except Exception:  # noqa: BLE001
                     pass
-        time.sleep(INTERVALLO_SECONDI)
+        time.sleep(20 if finestra_veloce else INTERVALLO_SECONDI)
 
     salva_stato(stato)
     log(f"Fine giornata: {controlli} controlli fatti")

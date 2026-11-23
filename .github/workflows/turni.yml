@@ -21,10 +21,6 @@ on:
         description: "Parti subito senza aspettare le 9:30"
         type: boolean
         default: false
-      diagnosi_canc:
-        description: "Diagnosi tecnica annullamento"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -65,7 +61,6 @@ jobs:
           INTERVALLO_SECONDI: "60"
           MODALITA_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
           SUBITO: ${{ github.event_name == 'workflow_dispatch' && inputs.subito }}
-          DIAGNOSI_CANC: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnosi_canc }}
         run: python turni.py
 
       - name: Salva memoria dei turni
