@@ -360,6 +360,20 @@ def main():
         sys.exit(1)
     log("Accesso al totem riuscito")
 
+    if os.environ.get("DIAGNOSI_CANC") == "true":
+        for nome in ("js/totem.min.js", "js/dettaglio.min.js"):
+            try:
+                js = totem.s.get(urllib.parse.urljoin(URL_TOTEM, nome), timeout=30).text
+            except requests.RequestException:
+                continue
+            for parola in ("Cancellazioni.aspx", "in gestione", "gestione presso",
+                           "Violazione", "Respinta", "bbar-", "annulla", "Annulla",
+                           "params:{matricola"):
+                for m in list(re.finditer(re.escape(parola), js))[:4]:
+                    pezzo = js[max(0, m.start() - 160): m.end() + 260].replace("\n", " ")
+                    log(f"DC {nome} [{parola}] :: {pezzo}")
+        return
+
     stato = carica_stato()
 
     if MODALITA_TEST:
