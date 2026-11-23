@@ -457,7 +457,6 @@ def main():
     ultimi_stati = {}       # ultimo stato visto per giorno (per loggare le transizioni)
     sbiancati = set()       # giorni per cui ho gia' mandato lo sbiancamento
     codice_cambiato = set()  # giorni il cui CODICE turno e' cambiato in questa sessione
-    reali_segnalati = set()  # violazioni reali (senza cambio codice) gia' segnalate
     finestra_veloce = False  # True quando una casella e' "in gestione CPS"
     while datetime.now(ROMA) < fine:
         if stop_alle and datetime.now(ROMA) >= stop_alle and not finestra_veloce:
@@ -532,30 +531,22 @@ def main():
                         finestra_veloce = True
                     # stati per cui il totem accende il pulsante Annulla
                     nuovi = {"Violazione", "Respinta"} & ora - base_stati.get(iso, set())
-                    if not nuovi:
+                    if not nuovi or iso in sbiancati:
                         continue
-                    if iso in codice_cambiato:
-                        # REGOLA DI SICUREZZA: si annulla solo se prima e' cambiato
-                        # il codice del turno. Questo e' il caso buono.
-                        if iso not in sbiancati:
-                            tipi = ", ".join(sorted({SEQ_TIPO.get(seq, f"tipo {seq}")
-                                                     for seq, s in righe if s in nuovi}))
-                            etich = " e ".join(sorted(nuovi))
-                            whatsapp(f"⚪ Sbiancamento – annullare\n{nome_giorno(iso)}: "
-                                     f"{tipi} ({etich})\n(SIMULAZIONE: non ho annullato)")
-                            sbiancati.add(iso)
-                            finestra_veloce = True
-                            log(f"SBIANCAMENTO simulato {nome_giorno(iso)} ({tipi}; {etich})")
-                            if stop_alle is not None:
-                                stop_alle = max(stop_alle, datetime.now(ROMA) + timedelta(minutes=5))
-                    elif iso not in reali_segnalati:
-                        # violazione/respinta SENZA cambio codice: problema vero,
-                        # non si tocca, ma avviso l'utente.
-                        whatsapp(f"⚠️ {nome_giorno(iso)}: {' e '.join(sorted(nuovi))}, ma il "
-                                 f"codice del turno NON è cambiato. Sembra un problema vero: "
-                                 f"controlla tu, io non annullo.")
-                        reali_segnalati.add(iso)
-                        log(f"Violazione/Respinta REALE (codice invariato) {nome_giorno(iso)}")
+                    # SIMULAZIONE: segnalo ogni caso annullabile, indicando se il
+                    # codice del turno era cambiato o no. La regola definitiva su
+                    # QUANDO annullare la fisseremo guardando i casi veri.
+                    tipi = ", ".join(sorted({SEQ_TIPO.get(seq, f"tipo {seq}")
+                                             for seq, s in righe if s in nuovi}))
+                    etich = " e ".join(sorted(nuovi))
+                    contesto = "codice CAMBIATO" if iso in codice_cambiato else "codice invariato"
+                    whatsapp(f"⚪ Sbiancamento – annullare\n{nome_giorno(iso)}: {tipi} ({etich})\n"
+                             f"[{contesto}]\n(SIMULAZIONE: non ho annullato)")
+                    sbiancati.add(iso)
+                    finestra_veloce = True
+                    log(f"SBIANCAMENTO simulato {nome_giorno(iso)} ({tipi}; {etich}; {contesto})")
+                    if stop_alle is not None:
+                        stop_alle = max(stop_alle, datetime.now(ROMA) + timedelta(minutes=5))
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
