@@ -468,18 +468,10 @@ def main():
                     if ntfy("🚌 Variazioni aggiornate", NTFY_TOPIC_COLLEGHI):
                         stato["_colleghi"] = oggi.isoformat()
                         log("Avviso colleghi inviato")
-            if controlli % 2 == 1:
-                foto = osserva(totem, oggi)
-                if foto:
-                    precedente = stato.get("_oss") or {}
-                    cambi = confronta_osservatorio(precedente, foto)
-                    for fonte, lista in cambi.items():
-                        log(f"Osservatorio: cambiata '{fonte}' ({len(lista)} voci): "
-                            + ", ".join(sorted({c[0].split('.')[-1] for c in lista}))[:300])
-                        righe = [f"{k}: {a} ➜ {b}" for k, a, b in lista[:12]]
-                        extra = f"\n…e altre {len(lista) - 12}" if len(lista) > 12 else ""
-                        whatsapp(f"🔎 Osservatorio: cambiato '{fonte}' ({len(lista)} voci)\n" + "\n".join(righe) + extra)
-                    stato["_oss"] = foto
+            # Osservatorio spento: le sue fonti (graduatorie, colori del mese)
+            # erano troppo rumorose e davano falsi allarmi. Restano solo gli
+            # avvisi sul turno vero. Per riaccenderlo in futuro basta rimettere
+            # qui il controllo delle fonti.
             salva_stato(stato)
             if controlli % 30 == 1:
                 log(f"Controllo n. {controlli}: tutto regolare")
