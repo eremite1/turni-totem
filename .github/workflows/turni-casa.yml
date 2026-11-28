@@ -1,12 +1,13 @@
 name: Turni per Casa Nerola
 
 # Manda tutti i turni (anche quelli cambiati) a Home Assistant
-# su un canale ntfy privato. Gira ogni 3 ore: ntfy conserva
-# l'ultimo messaggio per 12 ore, cosi' la casa lo trova sempre.
+# su un canale ntfy privato. Gira ogni 30 minuti (un cambio con un collega
+# arriva alla casa in circa mezz'ora): ntfy conserva l'ultimo messaggio
+# per 12 ore, cosi' la casa lo trova sempre.
 
 on:
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "17,47 * * * *"
   workflow_dispatch:
 
 permissions:

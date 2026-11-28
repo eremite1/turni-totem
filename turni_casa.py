@@ -48,18 +48,34 @@ def _ora(v):
     return f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
 
 
+def _min(hhmm):
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
 def orari_e_luoghi(dati):
-    """Dai campi del dettaglio ricava allocazione (linea-tabella), luogo e ora
-    di inizio e fine. I nomi dei campi del totem non sono noti a priori:
-    li riconosco dalle parole che contengono."""
+    """Dai campi del dettaglio ricava allocazione (linea-tabella), luoghi e orari.
+    I nomi dei campi del totem non sono noti a priori: li riconosco dalle
+    parole che contengono.
+
+    Turni SPEZZATI (piu' pezzi nello stesso giorno): ogni riga del totem e' un
+    pezzo. Le righe non arrivano sempre in ordine, quindi NON prendo "il primo
+    inizio e l'ultima fine" che trovo, ma:
+      - inizio = l'orario di inizio piu' presto,
+      - fine   = l'orario di fine piu' tardi (se un pezzo finisce dopo
+                 mezzanotte conta come giorno dopo),
+      - p      = l'elenco dei pezzi in ordine, es. [["06:15","10:16"],["10:43","12:47"]].
+    """
     righe = {}
     for chiave, valore in dati.items():
         fonte, resto = chiave.split(".", 1) if "." in chiave else ("", chiave)
         nome, _, i = resto.partition("#")
         righe.setdefault((fonte, i), {})[nome.upper()] = str(valore).strip()
-    out = {"al": "", "li": "", "oi": "", "of": "", "lf": ""}
-    for (fonte, i) in sorted(righe):
+    out = {"al": "", "li": "", "lf": ""}
+    pezzi = []
+    for (fonte, i) in sorted(righe, key=lambda x: (x[0], int(x[1]) if x[1].isdigit() else 0)):
         r = righe[(fonte, i)]
+        oi = of = li = lf = ""
         for k, v in r.items():
             if not v or v.lower() in ("none", "null"):
                 continue
@@ -67,14 +83,40 @@ def orari_e_luoghi(dati):
             fin = "FIN" in k or "ARRIV" in k
             if "ALLOC" in k and not out["al"]:
                 out["al"] = v[:20]
-            elif "LUOG" in k and ini and not out["li"]:
-                out["li"] = v[:20]
+            elif "LUOG" in k and ini:
+                li = v[:20]
             elif "LUOG" in k and fin:
-                out["lf"] = v[:20]
-            elif ("ORA" in k or "ORARIO" in k) and ini and not out["oi"] and _ora(v):
-                out["oi"] = _ora(v)
+                lf = v[:20]
+            elif ("ORA" in k or "ORARIO" in k) and ini and _ora(v):
+                oi = _ora(v)
             elif ("ORA" in k or "ORARIO" in k) and fin and _ora(v):
-                out["of"] = _ora(v)
+                of = _ora(v)
+        if oi:
+            pezzi.append({"oi": oi, "of": of, "li": li, "lf": lf})
+    if pezzi:
+        # stesso pezzo letto da due fonti diverse: lo tengo una volta sola
+        visti, unici = set(), []
+        for p in pezzi:
+            if (p["oi"], p["of"]) not in visti:
+                visti.add((p["oi"], p["of"]))
+                unici.append(p)
+        unici.sort(key=lambda p: _min(p["oi"]))
+        primo = unici[0]
+        inizio = _min(primo["oi"])
+
+        def fine_assoluta(p):
+            if not p["of"]:
+                return -1
+            f = _min(p["of"])
+            return f + 1440 if f <= _min(p["oi"]) or f < inizio else f
+        ultimo = max(unici, key=fine_assoluta)
+        out["oi"] = primo["oi"]
+        out["li"] = primo["li"] or out["li"]
+        if ultimo["of"]:
+            out["of"] = ultimo["of"]
+            out["lf"] = ultimo["lf"] or out["lf"]
+        if len(unici) > 1:
+            out["p"] = [[p["oi"], p["of"]] for p in unici]
     return {k: v for k, v in out.items() if v}
 
 
